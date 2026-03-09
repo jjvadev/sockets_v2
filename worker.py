@@ -1,19 +1,27 @@
 import argparse
 import socket
-from typing import Dict
+from typing import Dict, List, Tuple
 
 import numpy as np
 
 from connection import PORT, connect_with_retry, recv_msg, send_msg
 
 
-# ─────────────────────────────────────────────────────────────
-# Modelo simple
-# ─────────────────────────────────────────────────────────────
-def softmax(z: np.ndarray) -> np.ndarray:
-    z = z - np.max(z, axis=0, keepdims=True)
-    expz = np.exp(z)
-    return expz / np.sum(expz, axis=0, keepdims=True)
+# ═══════════════════════════════════════════════════════════
+# ACTIVACIONES
+# ═══════════════════════════════════════════════════════════
+def leaky_relu(Z: np.ndarray, a: float = 0.01) -> np.ndarray:
+    return np.where(Z > 0, Z, a * Z)
+
+
+def d_leaky_relu(Z: np.ndarray, a: float = 0.01) -> np.ndarray:
+    return np.where(Z > 0, 1.0, a).astype(np.float32)
+
+
+def softmax(Z: np.ndarray) -> np.ndarray:
+    Z = Z - np.max(Z, axis=0, keepdims=True)
+    e = np.exp(Z)
+    return e / np.sum(e, axis=0, keepdims=True)
 
 
 def one_hot(Y: np.ndarray, n_classes: int = 10) -> np.ndarray:
@@ -22,74 +30,120 @@ def one_hot(Y: np.ndarray, n_classes: int = 10) -> np.ndarray:
     return out
 
 
-def forward(params: Dict[str, np.ndarray], X: np.ndarray) -> np.ndarray:
-    return params["W"] @ X + params["b"]
+# ═══════════════════════════════════════════════════════════
+# FORWARD / BACKWARD
+# ═══════════════════════════════════════════════════════════
+def forward_pass(
+    X: np.ndarray,
+    params: Dict[str, np.ndarray],
+    layer_dims: List[int],
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """
+    Retorna:
+      A_last: salida softmax
+      cache: valores intermedios para backward
+    """
+    cache = {}
+    A = X
+    L = len(layer_dims) - 1
+
+    cache["A0"] = X
+
+    for l in range(1, L + 1):
+        W = params[f"W{l}"]
+        b = params[f"b{l}"]
+
+        Z = W @ A + b
+        cache[f"Z{l}"] = Z
+
+        if l == L:
+            A = softmax(Z)
+        else:
+            A = leaky_relu(Z)
+
+        cache[f"A{l}"] = A
+
+    return A, cache
 
 
-def predict(params: Dict[str, np.ndarray], X: np.ndarray) -> np.ndarray:
-    return np.argmax(softmax(forward(params, X)), axis=0)
-
-
-def compute_loss_and_acc(params: Dict[str, np.ndarray], X: np.ndarray, Y: np.ndarray):
-    logits = forward(params, X)
-    probs = softmax(logits)
-    Yh = one_hot(Y)
-
+def compute_cost(A_last: np.ndarray, Y: np.ndarray) -> float:
+    Yh = one_hot(Y, n_classes=A_last.shape[0])
     eps = 1e-12
-    loss = -np.mean(np.sum(Yh * np.log(probs + eps), axis=0))
-    acc = np.mean(np.argmax(probs, axis=0) == Y)
-
-    return float(loss), float(acc)
+    cost = -np.mean(np.sum(Yh * np.log(A_last + eps), axis=0))
+    return float(cost)
 
 
-def local_train(
+def backward_pass(
+    Y: np.ndarray,
+    params: Dict[str, np.ndarray],
+    cache: Dict[str, np.ndarray],
+    layer_dims: List[int],
+) -> Dict[str, np.ndarray]:
+    grads = {}
+    L = len(layer_dims) - 1
+    m = Y.shape[0]
+
+    Yh = one_hot(Y, n_classes=layer_dims[-1])
+
+    # Capa de salida: softmax + cross entropy
+    A_last = cache[f"A{L}"]
+    dZ = (A_last - Yh) / m
+
+    for l in range(L, 0, -1):
+        A_prev = cache[f"A{l-1}"]
+        W = params[f"W{l}"]
+
+        dW = dZ @ A_prev.T
+        db = np.sum(dZ, axis=1, keepdims=True)
+
+        grads[f"dW{l}"] = dW.astype(np.float32)
+        grads[f"db{l}"] = db.astype(np.float32)
+
+        if l > 1:
+            Z_prev = cache[f"Z{l-1}"]
+            dA_prev = W.T @ dZ
+            dZ = dA_prev * d_leaky_relu(Z_prev)
+
+    return grads
+
+
+def compute_grads_and_cost(
     params: Dict[str, np.ndarray],
     X: np.ndarray,
     Y: np.ndarray,
-    lr: float,
-    local_epochs: int,
-    batch_size: int = 128,
-):
-    W = params["W"].copy()
-    b = params["b"].copy()
-
-    n = Y.shape[0]
-
-    for _ in range(local_epochs):
-        idx = np.random.permutation(n)
-        Xs = X[:, idx]
-        Ys = Y[idx]
-        Yh = one_hot(Ys)
-
-        for start in range(0, n, batch_size):
-            end = min(start + batch_size, n)
-
-            Xb = Xs[:, start:end]
-            Yb = Yh[:, start:end]
-
-            logits = W @ Xb + b
-            probs = softmax(logits)
-
-            m = Xb.shape[1]
-            dZ = (probs - Yb) / m
-            dW = dZ @ Xb.T
-            db = np.sum(dZ, axis=1, keepdims=True)
-
-            W -= lr * dW.astype(np.float32)
-            b -= lr * db.astype(np.float32)
-
-    new_params = {
-        "W": W.astype(np.float32),
-        "b": b.astype(np.float32),
-    }
-
-    loss, acc = compute_loss_and_acc(new_params, X, Y)
-    return new_params, loss, acc
+    layer_dims: List[int],
+) -> Tuple[Dict[str, np.ndarray], float]:
+    A_last, cache = forward_pass(X, params, layer_dims)
+    cost = compute_cost(A_last, Y)
+    grads = backward_pass(Y, params, cache, layer_dims)
+    return grads, cost
 
 
-# ─────────────────────────────────────────────────────────────
-# Worker
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# UTILIDADES
+# ═══════════════════════════════════════════════════════════
+def predict(
+    params: Dict[str, np.ndarray],
+    X: np.ndarray,
+    layer_dims: List[int],
+) -> np.ndarray:
+    probs, _ = forward_pass(X, params, layer_dims)
+    return np.argmax(probs, axis=0)
+
+
+def accuracy(
+    params: Dict[str, np.ndarray],
+    X: np.ndarray,
+    Y: np.ndarray,
+    layer_dims: List[int],
+) -> float:
+    pred = predict(params, X, layer_dims)
+    return float(np.mean(pred == Y))
+
+
+# ═══════════════════════════════════════════════════════════
+# WORKER
+# ═══════════════════════════════════════════════════════════
 def run(host: str, port: int):
     print("╔══════════════════════════════════════════════════════════╗")
     print("║  Worker — Entrenamiento Distribuido vía Sockets         ║")
@@ -100,61 +154,68 @@ def run(host: str, port: int):
     sock = connect_with_retry(host, port)
 
     try:
+        # 1. Avisar que está listo
         send_msg(sock, {
-            "type": "hello",
+            "type": "ready",
             "name": socket.gethostname(),
         })
 
-        ack = recv_msg(sock)
-        if ack.get("type") != "hello_ack":
-            raise RuntimeError("Handshake inválido con el servidor")
-
-        print(f"  Conectado. Slot asignado: {ack['worker_slot']}")
-
+        # 2. Recibir shard de datos
         init_msg = recv_msg(sock)
-        if init_msg.get("type") != "init":
-            raise RuntimeError("No llegó mensaje init")
+        if init_msg.get("type") != "data":
+            raise RuntimeError(f"Esperaba 'data', recibí '{init_msg.get('type')}'")
 
         worker_id = init_msg["worker_id"]
-        X = init_msg["X"]
-        Y = init_msg["Y"]
-        lr = init_msg["lr"]
-        local_epochs = init_msg["local_epochs"]
-        current_params = init_msg["params"]
+        X = init_msg["X"].astype(np.float32)
+        Y = init_msg["Y"].astype(np.int64)
+        layer_dims = init_msg["layer_dims"]
+        alpha = init_msg.get("alpha", 0.1)
 
         print(f"  Worker ID: {worker_id}")
         print(f"  Muestras recibidas: {Y.shape[0]}")
-        print(f"  lr={lr} | local_epochs={local_epochs}")
+        print(f"  Arquitectura: {layer_dims}")
+        print(f"  LR del servidor: {alpha}")
 
         while True:
             msg = recv_msg(sock)
             msg_type = msg.get("type")
 
-            if msg_type == "train_round":
-                rnd = msg["round"]
-                current_params = msg["params"]
+            if msg_type == "params":
+                epoch = msg["epoch"]
+                params = msg["params"]
 
-                print(f"\n  Entrenando ronda {rnd}...")
-                new_params, loss, acc = local_train(
-                    current_params,
-                    X,
-                    Y,
-                    lr=lr,
-                    local_epochs=local_epochs,
+                print(f"\n  Calculando gradientes de época {epoch}...")
+
+                grads, cost = compute_grads_and_cost(
+                    params=params,
+                    X=X,
+                    Y=Y,
+                    layer_dims=layer_dims,
+                )
+
+                acc = accuracy(
+                    params=params,
+                    X=X,
+                    Y=Y,
+                    layer_dims=layer_dims,
                 )
 
                 send_msg(sock, {
-                    "type": "round_result",
+                    "type": "grads",
                     "worker_id": worker_id,
-                    "round": rnd,
-                    "params": new_params,
-                    "loss": loss,
-                    "acc": acc,
+                    "epoch": epoch,
+                    "grads": grads,
+                    "cost": float(cost),
+                    "acc": float(acc),
+                    "n_samples": int(Y.shape[0]),
                 })
 
-                print(f"  Enviado resultado ronda {rnd} | loss={loss:.4f} | acc={acc:.4f}")
+                print(
+                    f"  Enviado epoch {epoch} | "
+                    f"cost={cost:.4f} | acc_local={acc:.4f}"
+                )
 
-            elif msg_type == "shutdown":
+            elif msg_type == "stop":
                 print("\n  El servidor indicó cierre.")
                 break
 
@@ -168,6 +229,9 @@ def run(host: str, port: int):
             pass
 
 
+# ═══════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, required=True, help="IP del servidor")

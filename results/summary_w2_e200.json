@@ -1,0 +1,18 @@
+{
+  "workers": 2,
+  "epochs": 200,
+  "learning_rate": 0.1,
+  "layer_dims": [
+    784,
+    256,
+    128,
+    10
+  ],
+  "seed": 42,
+  "n_train": 50000,
+  "print_every": 10,
+  "final_train_acc": 0.9531,
+  "final_test_acc": 0.9477,
+  "total_time_sec": 44.48550009727478,
+  "history_points": 21
+}
