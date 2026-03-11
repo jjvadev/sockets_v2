@@ -12,3 +12,12 @@ __pycache__/
 *.pt
 *.pth
 *.npz
+data/
+results/
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.pt
+*.pth
+*.npz
