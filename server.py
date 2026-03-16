@@ -513,12 +513,12 @@ def parse_args():
 
     parser.add_argument("--workers",         type=int,   default=2)
     parser.add_argument("--rounds",          type=int,   default=50)
-    parser.add_argument("--local-epochs",    type=int,   default=2)       # 2 épocas locales → más progreso por round
-    parser.add_argument("--batch-size",      type=int,   default=256)     # batch grande → rounds más rápidos
+    parser.add_argument("--local-epochs",    type=int,   default=1)        # 1 época local — comportamiento estándar FedAvg
+    parser.add_argument("--batch-size",      type=int,   default=256)      # batch grande → rounds más rápidos
     parser.add_argument("--eval-batch-size", type=int,   default=512)
-    parser.add_argument("--lr",              type=float, default=1e-3)
+    parser.add_argument("--lr",              type=float, default=1e-2)     # SGD necesita LR más alto que Adam
     parser.add_argument("--weight-decay",    type=float, default=1e-4)
-    parser.add_argument("--optimizer",       type=str,   default="adam",       choices=["adam", "sgd"])
+    parser.add_argument("--optimizer",       type=str,   default="sgd",        choices=["adam", "sgd"])
     parser.add_argument("--momentum",        type=float, default=0.9)
     parser.add_argument("--activation",      type=str,   default="leaky_relu", choices=["relu", "leaky_relu"])
     parser.add_argument("--negative-slope",  type=float, default=0.01)
