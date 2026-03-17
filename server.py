@@ -212,14 +212,14 @@ def save_history_csv(history: List[Dict], csv_path: str):
         writer = csv.DictWriter(
             f,
             fieldnames=[
-                "round",
-                "train_loss",
+                "epoch",
+                "train_cost",
                 "train_acc",
-                "test_loss",
+                "test_cost",
                 "test_acc",
-                "worker_loss_mean",
+                "worker_cost_mean",
                 "worker_acc_mean",
-                "round_time",
+                "epoch_time",
                 "total_time",
             ],
         )
@@ -237,14 +237,14 @@ def save_model_pt(model: nn.Module, path: str):
 
 
 def save_plots(history: List[Dict], out_dir: str):
-    rounds = [h["round"] for h in history]
+    rounds = [h["epoch"] for h in history]
 
     plt.figure(figsize=(8, 5))
-    plt.plot(rounds, [h["train_loss"] for h in history], marker="o", label="Train Loss")
-    plt.plot(rounds, [h["test_loss"] for h in history], marker="s", label="Test Loss")
-    plt.xlabel("Round")
-    plt.ylabel("Loss")
-    plt.title("Loss por round")
+    plt.plot(rounds, [h["train_cost"] for h in history], marker="o", label="Costo Train")
+    plt.plot(rounds, [h["test_cost"] for h in history], marker="s", label="Costo Test")
+    plt.xlabel("Época")
+    plt.ylabel("Costo")
+    plt.title("Costo por época")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -254,9 +254,9 @@ def save_plots(history: List[Dict], out_dir: str):
     plt.figure(figsize=(8, 5))
     plt.plot(rounds, [h["train_acc"] for h in history], marker="o", label="Train Acc")
     plt.plot(rounds, [h["test_acc"] for h in history], marker="s", label="Test Acc")
-    plt.xlabel("Round")
+    plt.xlabel("Época")
     plt.ylabel("Accuracy")
-    plt.title("Accuracy por round")
+    plt.title("Accuracy por época")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -264,10 +264,10 @@ def save_plots(history: List[Dict], out_dir: str):
     plt.close()
 
     plt.figure(figsize=(8, 5))
-    plt.plot(rounds, [h["round_time"] for h in history], marker="o")
-    plt.xlabel("Round")
+    plt.plot(rounds, [h["epoch_time"] for h in history], marker="o")
+    plt.xlabel("Época")
     plt.ylabel("Segundos")
-    plt.title("Tiempo por round")
+    plt.title("Tiempo por época")
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, "time_per_round.png"))
@@ -275,7 +275,7 @@ def save_plots(history: List[Dict], out_dir: str):
 
     plt.figure(figsize=(8, 5))
     plt.plot(rounds, [h["total_time"] for h in history], marker="o")
-    plt.xlabel("Round")
+    plt.xlabel("Época")
     plt.ylabel("Segundos")
     plt.title("Tiempo acumulado")
     plt.grid(True)
@@ -286,7 +286,7 @@ def save_plots(history: List[Dict], out_dir: str):
     plt.figure(figsize=(8, 5))
     gap = [h["train_acc"] - h["test_acc"] for h in history]
     plt.plot(rounds, gap, marker="o")
-    plt.xlabel("Round")
+    plt.xlabel("Época")
     plt.ylabel("Gap")
     plt.title("Gap Train-Test")
     plt.grid(True)
@@ -300,7 +300,7 @@ def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
 
     run_name = args.run_name or (
-        f"cifar100_w{args.workers}_r{args.rounds}_le{args.local_epochs}"
+        f"cifar100_w{args.workers}_e{args.rounds}_le{args.local_epochs}"
         f"_bs{args.batch_size}_lr{args.lr}_{args.activation}"
     )
     results_dir = os.path.join(args.results_dir, run_name)
@@ -364,17 +364,17 @@ def train(args):
 
         print(f"\n{'=' * 96}")
         print(
-            f"  {'Round':>5}  {'TrLoss':>8}  {'TrAcc':>8}  {'TeLoss':>8}  {'TeAcc':>8}  "
-            f"{'WLoss':>8}  {'WAcc':>8}  {'t_rnd':>8}  {'t_tot':>8}"
+            f"  {'Época':>5}  {'CostTr':>8}  {'AccTr':>8}  {'CostTe':>8}  {'AccTe':>8}  "
+            f"{'CostW':>8}  {'AccW':>8}  {'t_ep':>8}  {'t_tot':>8}"
         )
         print(f"  {'-' * 92}")
 
-        for round_idx in range(args.rounds):
+        for round_idx in range(args.rounds):  # round_idx = época
             t_round = time.time()
 
             send_to_all(worker_sockets, {
                 "type": "model",
-                "round": round_idx,
+                "round": round_idx,  # epoch index
                 "state_dict": tensor_to_numpy_state_dict(model.state_dict()),
             })
 
@@ -409,14 +409,14 @@ def train(args):
             total_time = time.time() - t_start
 
             row = {
-                "round": int(round_idx),
-                "train_loss": float(train_loss),
+                "epoch": int(round_idx),
+                "train_cost": float(train_loss),
                 "train_acc": float(train_acc),
-                "test_loss": float(test_loss),
+                "test_cost": float(test_loss),
                 "test_acc": float(test_acc),
-                "worker_loss_mean": worker_loss_mean,
+                "worker_cost_mean": worker_loss_mean,
                 "worker_acc_mean": worker_acc_mean,
-                "round_time": float(round_time),
+                "epoch_time": float(round_time),
                 "total_time": float(total_time),
             }
             history.append(row)
@@ -448,7 +448,7 @@ def train(args):
             "dataset": "CIFAR-100",
             "device": str(device),
             "workers": args.workers,
-            "rounds": args.rounds,
+            "epochs": args.rounds,
             "local_epochs": args.local_epochs,
             "batch_size": args.batch_size,
             "eval_batch_size": args.eval_batch_size,
@@ -512,9 +512,9 @@ def parse_args():
     )
 
     parser.add_argument("--workers",         type=int,   default=2)
-    parser.add_argument("--rounds",          type=int,   default=50)
+    parser.add_argument("--rounds",          type=int,   default=50)        # número de épocas
     parser.add_argument("--local-epochs",    type=int,   default=1)        # 1 época local — comportamiento estándar FedAvg
-    parser.add_argument("--batch-size",      type=int,   default=256)      # batch grande → rounds más rápidos
+    parser.add_argument("--batch-size",      type=int,   default=128)
     parser.add_argument("--eval-batch-size", type=int,   default=512)
     parser.add_argument("--lr",              type=float, default=1e-2)     # SGD necesita LR más alto que Adam
     parser.add_argument("--weight-decay",    type=float, default=1e-4)
@@ -523,7 +523,7 @@ def parse_args():
     parser.add_argument("--activation",      type=str,   default="leaky_relu", choices=["relu", "leaky_relu"])
     parser.add_argument("--negative-slope",  type=float, default=0.01)
     parser.add_argument("--dropout",         type=float, default=0.3)
-    parser.add_argument("--channels",        type=int,   nargs=3, default=[64, 128, 256])
+    parser.add_argument("--channels",        type=int,   nargs=3, default=[32, 64, 128])   # red más pequeña → cómputo más rápido
     parser.add_argument("--fc-dim",          type=int,   default=256)
     parser.add_argument("--n-train",         type=int,   default=50000)   # 50k imágenes completas
     parser.add_argument("--seed",            type=int,   default=42)

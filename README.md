@@ -9,10 +9,10 @@ Entrenamiento distribuido tipo **FedAvg** sobre CIFAR-100 con CNN convolucional.
 | Dataset          | CIFAR-100     | 50 000 train / 10 000 test — conjunto completo      |
 | Rounds           | 50            | Suficiente para convergencia sin augmentation       |
 | Local epochs     | 2             | Más progreso por round → menos rounds necesarios    |
-| Batch size       | 256           | Batch grande → cada round más rápido                |
+| Batch size       | 128           | Estándar para CIFAR, buen balance gradiente-velocidad                |
 | Activation       | Leaky ReLU    | Más robusto que ReLU puro (sin neuronas muertas)    |
 | Augmentation     | ❌ desactivado | Simplifica el pipeline, tiempos más predecibles     |
-| Optimizer        | Adam lr=1e-3  | Convergencia estable sin tuning de LR               |
+| Optimizer        | SGD lr=1e-2   | Más control sobre convergencia, momentum=0.9                       |
 | Weight decay     | 1e-4          | Regularización leve, evita sobreajuste              |
 | Dropout          | 0.3           | Regularización adicional                            |
 | Arquitectura CNN | 64→128→256    | Suficiente capacidad para CIFAR-100 en CPU          |
@@ -42,8 +42,8 @@ python3 server.py --workers 2
 python3 server.py \
     --workers 2 \
     --rounds 50 \
-    --local-epochs 2 \
-    --batch-size 256 \
+    --local-epochs 1 \
+    --batch-size 128 \
     --activation leaky_relu \
     --port 65432
 
@@ -78,7 +78,7 @@ Los resultados se guardan en `results/<run_name>/`:
 
 ```
 results/
-└── cifar100_w2_r50_le2_bs256_0.001_leaky_relu/
+└── cifar100_w2_r50_le1_bs128_0.01_leaky_relu/
     ├── history.csv        ← métricas por round
     ├── summary.json       ← resumen del experimento
     ├── best_model.pt      ← mejor modelo (mejor test acc)
